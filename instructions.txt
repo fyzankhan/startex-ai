@@ -1,0 +1,38 @@
+Project Setup Instructions
+--------------------------
+
+1. Unzip the Project Folder
+   - Extract the contents of the provided zip file to your preferred location.
+
+2. Import the Database to phpMyAdmin
+   - Open phpMyAdmin in your browser.
+   - Create a new database (e.g., branch_audit).
+   - Use the "Import" tab to upload and import the provided .sql file. customer_comments, branch_audit
+
+3. Install Python Dependencies
+   - Make sure Python and pip are installed on your system.
+   - Open a terminal or command prompt and run the following command:
+
+     pip install Flask flasgger
+openai
+sqlalchemy
+pymysql
+transformers
+sentence-transformers
+keybert
+sentencepiece
+
+4. Run the Application
+   - In your terminal, navigate to the project folder.
+   - Run the following command to start the app:
+
+     python app.py
+
+5. Open the API Documentation
+   - Once the server is running, open your web browser and go to:
+
+     http://127.0.0.1:5000/apidocs/
+
+   - You will see the Swagger UI with interactive API documentation.
+
+You're all set!

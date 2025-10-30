@@ -1,0 +1,17 @@
+Flask
+flasgger
+openai
+sqlalchemy
+pymysql
+transformers
+sentence-transformers
+keybert
+sentencepiece
+pyabsa
+protobuf
+langchain
+langchain-openai
+langchain-community
+faiss-cpu 
+tiktoken
+langdetect
