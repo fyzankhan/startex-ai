@@ -11,4 +11,4 @@ app.register_blueprint(chatbot_bp, url_prefix="/chatbot")
 app.register_blueprint(semantic_bp, url_prefix="/semantic")
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    app.run(port=8090, debug=True)
