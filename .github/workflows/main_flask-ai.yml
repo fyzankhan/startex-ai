@@ -1,4 +1,4 @@
-name: Deploy Flask App - Remote Build (Py 3.12)
+name: Deploy Flask (B2 / ML) to Azure Web App - flask-ai
 
 on:
   push:
@@ -13,75 +13,123 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # 1) Checkout code
+      - uses: actions/checkout@v4
 
-      # Keep the deploy artifact small: source only (no venv/site-packages)
-      - name: Package source (no venv)
+      # 2) (Optional) Set up Python just to validate YAML & tooling if needed
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 3) Inject a pinned, deployment-safe requirements.txt for Azure (server-side Oryx build)
+      #    This avoids rpds/jsonschema import failures and pins heavy libs to stable wheels.
+      - name: Write deployment requirements.txt
         run: |
-          zip -r release.zip . \
-            -x ".git/*" ".github/*" \
-               "venv/*" ".venv/*" "antenv/*" \
-               "site-packages/*" "__pycache__/*" \
-               "**/*.pyc" "**/*.pyo" "node_modules/*"
+          cat > requirements.txt <<'REQS'
+          # ---- Core runtime ----
+          Flask==3.1.2
+          gunicorn==23.0.0
 
-      - name: Azure Login (OIDC)
+          # ---- Swagger / JSON validation ----
+          flasgger==0.9.7.1
+          jsonschema==4.17.3  # pinned to avoid rpds build problem
+
+          # ---- OpenAI + LangChain stack ----
+          openai==1.53.0
+          tiktoken==0.7.0
+          langchain==0.3.7
+          langchain-openai==0.2.4
+          langchain-community==0.3.5
+
+          # ---- Database ----
+          SQLAlchemy==2.0.36
+          PyMySQL==1.1.1
+
+          # ---- NLP / ML Core ----
+          torch==2.4.1
+          transformers==4.46.2
+          tokenizers==0.22.1
+          sentence-transformers==2.7.0
+          keybert==0.8.5
+          faiss-cpu==1.8.0.post1
+          sentencepiece==0.2.0
+          langdetect==1.0.9
+          protobuf==5.28.3
+          packaging==24.1
+          pyabsa==2.5.20
+          scikit-learn==1.5.2
+          scipy==1.13.1
+          Pillow==10.4.0
+          spacy==3.7.4
+          requests==2.32.3
+          typing-extensions==4.12.2
+          REQS
+          echo "Final requirements.txt written."
+
+      # 4) Create slim zip (code only). Oryx on Azure will run pip install from requirements.txt.
+      - name: Create deployment zip (code only)
+        run: |
+          zip -r release.zip . -x ".git/*" ".github/*" "*__pycache__/*" "venv/*" "antenv/*" ".python_packages/*" "site-packages/*"
+
+      # 5) Azure login (OIDC)
+      - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_333CECB667CA4A17B6BBFF55B137D939 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      # Set runtime + app settings + startup command (auto-detect RG)
-      - name: Ensure App Service stack/app settings (Py 3.12)
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            APP="flask-ai"
+      # 6) Discover the resource group automatically (no hardcoding)
+      - name: Resolve Resource Group for flask-ai
+        id: rg
+        shell: bash
+        run: |
+          RG=$(az webapp list --query "[?name=='flask-ai'].resourceGroup | [0]" -o tsv)
+          if [ -z "$RG" ]; then
+            echo "Could not resolve resource group for app 'flask-ai'." >&2
+            exit 1
+          fi
+          echo "rg=$RG" >> $GITHUB_OUTPUT
+          echo "Using resource group: $RG"
 
-            # Find the resource group for this app
-            RG="$(az webapp list --query "[?name=='${APP}'].resourceGroup" -o tsv)"
-            if [ -z "$RG" ]; then
-              echo "❌ Could not resolve resource group for app '${APP}'.";
-              exit 1
-            fi
-            echo "✅ Resolved resource group: $RG"
+      # 7) Set App Settings to force Oryx build & extend timeouts for heavy ML wheels
+      - name: Configure App Settings for Oryx+ML
+        run: |
+          az webapp config appsettings set \
+            -g "${{ steps.rg.outputs.rg }}" \
+            -n flask-ai \
+            --settings \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              ENABLE_ORYX_BUILD=true \
+              SCM_COMMAND_IDLE_TIMEOUT=1800 \
+              WEBSITES_CONTAINER_START_TIME_LIMIT=1800
 
-            # 1) Force Linux Python 3.12 runtime
-            az webapp config set \
-              --name "$APP" \
-              --resource-group "$RG" \
-              --linux-fx-version "PYTHON|3.12"
-
-            # 2) App settings:
-            #    - Remote build (Oryx installs from requirements.txt once)
-            #    - Run From Package (mount ZIP, avoids unzip disk spikes)
-            #    - PORT=8090 (your app listens here; Gunicorn binds to ${PORT})
+          # (Optional) push secrets if you store them in GitHub -> Secrets
+          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
             az webapp config appsettings set \
-              --name "$APP" \
-              --resource-group "$RG" \
-              --settings \
-                SCM_DO_BUILD_DURING_DEPLOYMENT=true \
-                WEBSITE_RUN_FROM_PACKAGE=1 \
-                PORT=8090
+              -g "${{ steps.rg.outputs.rg }}" \
+              -n flask-ai \
+              --settings OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+          fi
+          if [ -n "${{ secrets.DB_URL }}" ]; then
+            az webapp config appsettings set \
+              -g "${{ steps.rg.outputs.rg }}" \
+              -n flask-ai \
+              --settings DB_URL="${{ secrets.DB_URL }}"
+          fi
 
-            # 3) Set startup command for Linux containers
-            #    Use 'main:app' if your entry file is main.py; here we assume app.py -> app
-            az webapp config set \
-              --name "$APP" \
-              --resource-group "$RG" \
-              --startup-file "gunicorn --bind=0.0.0.0:\${PORT} app:app"
+      # 8) Set the startup command (Gunicorn on Azure’s $PORT, with gthread worker)
+      - name: Configure Startup Command
+        run: |
+          az webapp config set \
+            -g "${{ steps.rg.outputs.rg }}" \
+            -n flask-ai \
+            --startup-file "gunicorn --bind=0.0.0.0:\${PORT} --workers=1 --threads=4 --worker-class=gthread --timeout=120 --keep-alive=30 --log-level=info app:app"
 
-      - name: Deploy ZIP (Remote Build)
+      # 9) Deploy the zip (code only) — Oryx will pip install on the App Service
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'flask-ai'
           slot-name: 'Production'
           package: release.zip
-
-      # Warm up once so first user hit isn't a cold start
-      - name: Warm up app
-        run: |
-          sleep 10
-          curl -I --max-time 25 https://flask-ai-andse2apc9frd8dp.southindia-01.azurewebsites.net || true
