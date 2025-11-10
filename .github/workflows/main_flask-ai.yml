@@ -1,4 +1,4 @@
-name: Deploy Flask App to Azure (no Oryx rebuild)
+name: Deploy Flask App to Azure Web App - flask-ai
 
 on:
   push:
@@ -8,28 +8,31 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      # 1️⃣ Checkout repo
+      # 1️⃣ Checkout the repository
       - uses: actions/checkout@v4
 
-      # 2️⃣ Set up Python
+      # 2️⃣ Set up Python (use 3.12 for stable builds)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # 3️⃣ Install deps locally (short build)
+      # 3️⃣ Install dependencies locally (no Oryx build on Azure)
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt --target="./site-packages"
 
-      # 4️⃣ Package app for deployment
+      # 4️⃣ Prepare ZIP package for Azure deployment
       - name: Prepare ZIP package
         run: |
           zip -r release.zip . -x "antenv/*" -x "*.git*" -x "__pycache__/*"
 
-      # 5️⃣ Login to Azure
+      # 5️⃣ Login securely to Azure (OIDC)
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -37,7 +40,7 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      # 6️⃣ Deploy ZIP directly (no Oryx)
+      # 6️⃣ Deploy prebuilt ZIP to Azure App Service
       - name: Deploy ZIP to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
