@@ -16,14 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Small source-only ZIP so OneDeploy doesn’t timeout
+      # Keep the deploy artifact small: source only (no venv/site-packages)
       - name: Package source (no venv)
         run: |
           zip -r release.zip . \
             -x ".git/*" ".github/*" \
                "venv/*" ".venv/*" "antenv/*" \
                "site-packages/*" "__pycache__/*" \
-               "*.pyc" "*.pyo" "node_modules/*"
+               "**/*.pyc" "**/*.pyo" "node_modules/*"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -32,30 +32,46 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      # Enforce Python 3.12 + App Settings BEFORE deploy
-      - name: Ensure App Service stack/app settings
+      # Set runtime + app settings + startup command (auto-detect RG)
+      - name: Ensure App Service stack/app settings (Py 3.12)
         uses: azure/cli@v2
         with:
           inlineScript: |
-            APP=flask-ai
-            RG=$(az webapp show --name $APP --query resourceGroup -o tsv)
+            set -euo pipefail
+            APP="flask-ai"
 
-            # Set stack to Python 3.12 (Linux)
+            # Find the resource group for this app
+            RG="$(az webapp list --query "[?name=='${APP}'].resourceGroup" -o tsv)"
+            if [ -z "$RG" ]; then
+              echo "❌ Could not resolve resource group for app '${APP}'.";
+              exit 1
+            fi
+            echo "✅ Resolved resource group: $RG"
+
+            # 1) Force Linux Python 3.12 runtime
             az webapp config set \
-              --name $APP \
-              --resource-group $RG \
+              --name "$APP" \
+              --resource-group "$RG" \
               --linux-fx-version "PYTHON|3.12"
 
-            # App settings for reliable deploy/run
+            # 2) App settings:
+            #    - Remote build (Oryx installs from requirements.txt once)
+            #    - Run From Package (mount ZIP, avoids unzip disk spikes)
+            #    - PORT=8090 (your app listens here; Gunicorn binds to ${PORT})
             az webapp config appsettings set \
-              --name $APP \
-              --resource-group $RG \
+              --name "$APP" \
+              --resource-group "$RG" \
               --settings \
                 SCM_DO_BUILD_DURING_DEPLOYMENT=true \
                 WEBSITE_RUN_FROM_PACKAGE=1 \
                 PORT=8090
 
-            # Optional: keep site warm (AlwaysOn recommended in portal)
+            # 3) Set startup command for Linux containers
+            #    Use 'main:app' if your entry file is main.py; here we assume app.py -> app
+            az webapp config set \
+              --name "$APP" \
+              --resource-group "$RG" \
+              --startup-file "gunicorn --bind=0.0.0.0:\${PORT} app:app"
 
       - name: Deploy ZIP (Remote Build)
         uses: azure/webapps-deploy@v3
@@ -64,7 +80,7 @@ jobs:
           slot-name: 'Production'
           package: release.zip
 
-      # Warm-up: hit the site once so gunicorn boots
+      # Warm up once so first user hit isn't a cold start
       - name: Warm up app
         run: |
           sleep 10
