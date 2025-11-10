@@ -1,6 +1,3 @@
-# Docs: https://github.com/Azure/webapps-deploy
-# Purpose: CI/CD pipeline for Flask + MySQL + OpenAI app deployment to Azure App Service
-
 name: Build and deploy Python app to Azure Web App - flask-ai
 
 on:
@@ -15,42 +12,18 @@ jobs:
       contents: read
 
     steps:
-      # -----------------------------
-      # Checkout source code
-      # -----------------------------
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # -----------------------------
-      # Set up Python
-      # -----------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'    # ✅ Stable, supported by Azure Oryx
+          python-version: '3.12'
 
-      # -----------------------------
-      # Install OS-level build tools (fixes for thinc/srsly builds)
-      # -----------------------------
       - name: Install system build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential python3-dev
 
-      # -----------------------------
-      # Cache pip dependencies
-      # -----------------------------
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      # -----------------------------
-      # Install dependencies
-      # -----------------------------
       - name: Install dependencies
         run: |
           python -m venv antenv
@@ -58,20 +31,16 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # -----------------------------
-      # Upload artifact for deploy stage
-      # -----------------------------
-      - name: Upload artifact
+      - name: Upload artifact for deploy
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: |
             .
             !antenv/
+            !__pycache__/
+            !.git/
 
-  # -----------------------------------------------------------------
-  # DEPLOYMENT STAGE
-  # -----------------------------------------------------------------
   deploy:
     runs-on: ubuntu-latest
     needs: build
@@ -80,39 +49,19 @@ jobs:
       contents: read
 
     steps:
-      # -----------------------------
-      # Download built artifact
-      # -----------------------------
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: python-app
 
-      # -----------------------------
-      # Login to Azure
-      # -----------------------------
-      - name: Login to Azure
+      - name: Azure login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_333CECB667CA4A17B6BBFF55B137D939 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      # -----------------------------
-      # Deploy to Azure Web App
-      # -----------------------------
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'flask-ai'
           slot-name: 'Production'
-
-      # -----------------------------
-      # Optional: Post-deploy health check
-      # -----------------------------
-      - name: Verify deployment
-        run: |
-          echo "Waiting for deployment to finish..."
-          sleep 10
-          curl -I https://flask-ai-andse2apc9frd8dp.southindia-01.azurewebsites.net || true
