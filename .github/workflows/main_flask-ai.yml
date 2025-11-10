@@ -1,4 +1,4 @@
-name: Deploy Flask App to Azure Web App - flask-ai (remote build)
+name: Deploy Flask App - Remote Build (Py 3.12)
 
 on:
   push:
@@ -13,14 +13,17 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # keep artifact tiny: just your source
-      - name: Create deployment ZIP (source only)
+      # Small source-only ZIP so OneDeploy doesn’t timeout
+      - name: Package source (no venv)
         run: |
           zip -r release.zip . \
-            -x "antenv/*" "*.git/*" ".github/*" "__pycache__/*" \
-               "site-packages/*" "venv/*" ".venv/*" "*.pyc" "*.pyo"
+            -x ".git/*" ".github/*" \
+               "venv/*" ".venv/*" "antenv/*" \
+               "site-packages/*" "__pycache__/*" \
+               "*.pyc" "*.pyo" "node_modules/*"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -29,9 +32,40 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      - name: Deploy ZIP to Azure Web App (OneDeploy)
+      # Enforce Python 3.12 + App Settings BEFORE deploy
+      - name: Ensure App Service stack/app settings
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            APP=flask-ai
+            RG=$(az webapp show --name $APP --query resourceGroup -o tsv)
+
+            # Set stack to Python 3.12 (Linux)
+            az webapp config set \
+              --name $APP \
+              --resource-group $RG \
+              --linux-fx-version "PYTHON|3.12"
+
+            # App settings for reliable deploy/run
+            az webapp config appsettings set \
+              --name $APP \
+              --resource-group $RG \
+              --settings \
+                SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+                WEBSITE_RUN_FROM_PACKAGE=1 \
+                PORT=8090
+
+            # Optional: keep site warm (AlwaysOn recommended in portal)
+
+      - name: Deploy ZIP (Remote Build)
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'flask-ai'
           slot-name: 'Production'
           package: release.zip
+
+      # Warm-up: hit the site once so gunicorn boots
+      - name: Warm up app
+        run: |
+          sleep 10
+          curl -I --max-time 25 https://flask-ai-andse2apc9frd8dp.southindia-01.azurewebsites.net || true
