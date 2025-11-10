@@ -13,26 +13,43 @@ jobs:
       contents: read
 
     steps:
-      # 1️⃣ Checkout the repository
+      # 1) Checkout
       - uses: actions/checkout@v4
 
-      # 2️⃣ Set up Python (use 3.12 for stable builds)
+      # 2) Python (match Azure runtime: 3.12)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # 3️⃣ Install dependencies locally (no Oryx build on Azure)
-      - name: Install dependencies
+      # 3) Build a real venv and install deps (no cache to keep artifact smaller)
+      - name: Create venv and install dependencies
         run: |
+          python -m venv antenv
+          source antenv/bin/activate
           python -m pip install --upgrade pip
-          pip install -r requirements.txt --target="./site-packages"
+          pip install -r requirements.txt --no-cache-dir
+          deactivate
+          # Let Oryx know to use this venv (so it won't rebuild on server)
+          printf "[build]\nvirtualenv = \"antenv\"\npython_version = \"3.12\"\n" > oryx-manifest.toml
 
-      # 4️⃣ Prepare ZIP package for Azure deployment
+      # 4) Trim common bloat to reduce ZIP size
+      - name: Prune caches and tests from venv
+        run: |
+          find antenv -name "__pycache__" -type d -prune -exec rm -rf {} +
+          find antenv -name "tests" -type d -prune -exec rm -rf {} +
+          rm -rf antenv/lib/python*/site-packages/**/*.dist-info/tests || true
+
+      # 5) Package app for Azure
       - name: Prepare ZIP package
         run: |
-          zip -r release.zip . -x "antenv/*" -x "*.git*" -x "__pycache__/*"
+          zip -r release.zip . \
+            -x "antenv/**/__pycache__/*" \
+               "*.git/*" \
+               ".github/*" \
+               "**/*.pyc" \
+               "**/*.pyo"
 
-      # 5️⃣ Login securely to Azure (OIDC)
+      # 6) Login to Azure (OIDC)
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -40,7 +57,7 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      # 6️⃣ Deploy prebuilt ZIP to Azure App Service
+      # 7) Deploy prebuilt ZIP (Oryx will detect the manifest + venv and skip rebuild)
       - name: Deploy ZIP to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
