@@ -1,1 +1,10 @@
 Flask
+flasgger
+SQLAlchemy
+pymysql
+python-dotenv
+openai
+langchain
+langchain-openai
+langchain-core
+langchain-community
