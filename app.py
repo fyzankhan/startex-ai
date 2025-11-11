@@ -1,9 +1,9 @@
 from flask import Flask, jsonify
-from flasgger import Swagger
+# from flasgger import Swagger
 from controllers.chatbot_controller import chatbot_bp
 
 app = Flask(__name__)
-swagger = Swagger(app)
+# swagger = Swagger(app)
 
 @app.route('/health', methods=['GET'])
 def health_check():
