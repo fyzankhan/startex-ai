@@ -1,4 +1,4 @@
-name: Deploy Flask App (prebuilt) to Azure Web App - flask-ai
+name: Deploy Flask App (clean build) to Azure Web App - flask-ai
 
 on:
   push:
@@ -13,60 +13,46 @@ jobs:
       contents: read
 
     steps:
-      # 1️⃣ Checkout repo
+      # 1️⃣ Checkout your repo
       - uses: actions/checkout@v4
 
-      # 2️⃣ Setup Python (Azure supports 3.12)
+      # 2️⃣ Use Python 3.12 (same as Azure runtime)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # 3️⃣ Build dependencies locally into ./site-packages
-      - name: Build vendor libs
+      # 3️⃣ Clean old caches and temp build files
+      - name: Clean build environment
+        run: |
+          rm -rf site-packages release.zip *.pyc __pycache__ .python_packages
+          mkdir -p site-packages
+
+      # 4️⃣ Prebuild dependencies (CPU only)
+      - name: Install dependencies locally
         run: |
           python -m pip install --upgrade pip
-          echo "✅ Installing dependencies into site-packages..."
-          # Ensure we use stable wheel-only packages (no C++ builds)
-          pip install --only-binary=:all: Flask==3.1.2 gunicorn==23.0.0 flasgger==0.9.5 \
-            openai sqlalchemy pymysql transformers sentence-transformers keybert \
-            sentencepiece pyabsa protobuf langchain langchain-openai \
-            langchain-community faiss-cpu tiktoken langdetect -t site-packages
-          
-          # Add pinned fixes for JSONSchema dependency chain
-          pip install --only-binary=:all: rpds-py==0.10.6 referencing==0.35.1 jsonschema==4.21.1 -t site-packages
+          pip install --no-cache-dir --only-binary=:all: -r requirements.txt -t site-packages
+          # Add safe jsonschema versions (to prevent rpds errors)
+          pip install --no-cache-dir rpds-py==0.10.6 referencing==0.35.1 jsonschema==4.21.1 -t site-packages
 
-          echo "✅ Verifying jsonschema import..."
-          python - <<'PY'
-          import sys, os
-          sys.path.insert(0, os.path.abspath('site-packages'))
-          import jsonschema, referencing
-          print("OK jsonschema:", jsonschema.__version__)
-          PY
-
-      # 4️⃣ Create startup script (sets PYTHONPATH and launches Gunicorn)
+      # 5️⃣ Create startup.sh with PYTHONPATH + gunicorn
       - name: Create startup.sh
         run: |
           cat > startup.sh <<'BASH'
           #!/usr/bin/env bash
           export PYTHONPATH="/home/site/wwwroot/site-packages:/home/site/wwwroot"
-          exec gunicorn --bind=0.0.0.0:${PORT} \
-                        --workers=1 \
-                        --threads=4 \
-                        --worker-class=gthread \
-                        --timeout=120 \
-                        --keep-alive=30 \
-                        --log-level=info \
-                        app:app
+          exec gunicorn --bind=0.0.0.0:${PORT:-8000} \
+                        --workers=1 --threads=4 --worker-class=gthread \
+                        --timeout=120 --log-level=info app:app
           BASH
           chmod +x startup.sh
 
-      # 5️⃣ Package everything into a ZIP for OneDeploy
-      - name: Package ZIP
+      # 6️⃣ Zip everything for deploy
+      - name: Package release.zip
         run: |
-          zip -r release.zip . -x "antenv/*" -x "*.git*" -x "__pycache__/*" -x "tests/*"
-          echo "✅ Created release.zip for deployment."
+          zip -r release.zip . -x "antenv/*" -x "*.git*" -x "__pycache__/*"
 
-      # 6️⃣ Login to Azure
+      # 7️⃣ Login to Azure securely
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -74,24 +60,26 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
 
-      # 7️⃣ Configure App Service (turn off Oryx, set Python path & startup)
-      - name: Configure App Service (disable Oryx, enable run-from-package)
+      # 8️⃣ Configure Web App (disable Oryx + set startup)
+      - name: Configure App Service
         uses: azure/cli@v2
         with:
           inlineScript: |
             APP=flask-ai
             RG=$(az webapp list --query "[?name=='$APP'].resourceGroup" -o tsv)
-            echo "Using resource group: $RG"
+            echo "Using Resource Group: $RG"
+
             az webapp config appsettings set -g "$RG" -n "$APP" --settings \
               SCM_DO_BUILD_DURING_DEPLOYMENT=false \
               WEBSITE_RUN_FROM_PACKAGE=1 \
               PYTHONPATH="/home/site/wwwroot/site-packages:/home/site/wwwroot"
+
             az webapp config set -g "$RG" -n "$APP" \
               --startup-file "./startup.sh" \
               --linux-fx-version "PYTHON|3.12"
 
-      # 8️⃣ Deploy to Azure (OneDeploy ZIP)
-      - name: Deploy ZIP to Azure Web App
+      # 9️⃣ Deploy ZIP to Azure Web App
+      - name: Deploy prebuilt ZIP
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'flask-ai'
