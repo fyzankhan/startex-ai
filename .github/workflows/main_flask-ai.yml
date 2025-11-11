@@ -1,86 +1,14 @@
-name: Deploy Flask App (clean build) to Azure Web App - flask-ai
+version: "3.9"
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      # 1️⃣ Checkout your repo
-      - uses: actions/checkout@v4
-
-      # 2️⃣ Use Python 3.12 (same as Azure runtime)
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      # 3️⃣ Clean old caches and temp build files
-      - name: Clean build environment
-        run: |
-          rm -rf site-packages release.zip *.pyc __pycache__ .python_packages
-          mkdir -p site-packages
-
-      # 4️⃣ Prebuild dependencies (CPU only)
-      - name: Install dependencies locally
-        run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir --only-binary=:all: -r requirements.txt -t site-packages
-          # Add safe jsonschema versions (to prevent rpds errors)
-          pip install --no-cache-dir rpds-py==0.10.6 referencing==0.35.1 jsonschema==4.21.1 -t site-packages
-
-      # 5️⃣ Create startup.sh with PYTHONPATH + gunicorn
-      - name: Create startup.sh
-        run: |
-          cat > startup.sh <<'BASH'
-          #!/usr/bin/env bash
-          export PYTHONPATH="/home/site/wwwroot/site-packages:/home/site/wwwroot"
-          exec gunicorn --bind=0.0.0.0:${PORT:-8000} \
-                        --workers=1 --threads=4 --worker-class=gthread \
-                        --timeout=120 --log-level=info app:app
-          BASH
-          chmod +x startup.sh
-
-      # 6️⃣ Zip everything for deploy
-      - name: Package release.zip
-        run: |
-          zip -r release.zip . -x "antenv/*" -x "*.git*" -x "__pycache__/*"
-
-      # 7️⃣ Login to Azure securely
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_333CECB667CA4A17B6BBFF55B137D939 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8FFF437F240744D69368AB119E60ED44 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_5CFC7011C380498797D4360D9B4CE671 }}
-
-      # 8️⃣ Configure Web App (disable Oryx + set startup)
-      - name: Configure App Service
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            APP=flask-ai
-            RG=$(az webapp list --query "[?name=='$APP'].resourceGroup" -o tsv)
-            echo "Using Resource Group: $RG"
-
-            az webapp config appsettings set -g "$RG" -n "$APP" --settings \
-              SCM_DO_BUILD_DURING_DEPLOYMENT=false \
-              WEBSITE_RUN_FROM_PACKAGE=1 \
-              PYTHONPATH="/home/site/wwwroot/site-packages:/home/site/wwwroot"
-
-            az webapp config set -g "$RG" -n "$APP" \
-              --startup-file "./startup.sh" \
-              --linux-fx-version "PYTHON|3.12"
-
-      # 9️⃣ Deploy ZIP to Azure Web App
-      - name: Deploy prebuilt ZIP
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: 'flask-ai'
-          package: release.zip
+services:
+  main_flask:
+    container_name: main_flask
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: always
+    volumes:
+      - .:/app
