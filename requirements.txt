@@ -1,6 +1,6 @@
 Flask
 SQLAlchemy
-pymysql
+PyMySQL
 python-dotenv
 openai
 langchain
@@ -8,3 +8,6 @@ langchain-openai
 langchain-core
 langchain-community
 cryptography
+transformers>=4.44,<5
+sentence-transformers
+keybert
