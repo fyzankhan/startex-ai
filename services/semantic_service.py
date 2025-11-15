@@ -1,49 +1,60 @@
+# semantic_service.py
+# Clean, fast, production-ready service layer for semantic analytics
+
 from datetime import date, datetime
+from typing import Any, Dict, List
+
 from sqlalchemy import text
-from services.semantic_engine import SemanticEngine
 from config import engine
-from typing import Any, Dict, List, Tuple
-import os
 
-MAX_SIMILARITY_COMMENTS = int(os.getenv("SEM_MAX_SIM_COMMENTS", "200"))  # cap O(n^2)
+from services.semantic_engine import SemanticEngine
 
+
+MAX_SIMILARITY_COMMENTS = 0  # disabled (engine S2 does not use embeddings)
+
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+def _iso(v):
+    if v is None:
+        return None
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    return str(v)
+
+
+def _bind_in_clause(column, values, prefix, params: dict) -> str:
+    if isinstance(values, (list, tuple, set)):
+        values = [v for v in values if v is not None]
+        if len(values) == 0:
+            return "1=0"
+    else:
+        values = [values] if values is not None else []
+
+    if not values:
+        return None
+
+    ph = []
+    for i, val in enumerate(values):
+        key = f"{prefix}_{i}"
+        ph.append(f":{key}")
+        params[key] = val
+    return f"{column} IN ({', '.join(ph)})"
+
+
+# ---------------------------------------------------------------------
+# Main Service
+# ---------------------------------------------------------------------
 class SemanticService:
     """
-    Fetch comments from MySQL using filters.
-    Run full analysis with SemanticEngine (location-aware).
-    No sampling: processes ALL comments returned by the query (except similarity cap).
+    Fetches comments, applies filters, returns:
+    - sentiment distribution (deduped)
+    - buzzwords (deduped)
+    - confusion detection (built-in engine)
+    - recommendations
+    - segmentation
     """
-
-    @staticmethod
-    def _iso(v):
-        if v is None:
-            return None
-        if isinstance(v, (datetime, date)):
-            return v.isoformat()
-        return str(v)
-
-    @staticmethod
-    def _bind_in_clause(column, values, param_prefix, params: dict) -> str:
-        """
-        Builds a deterministic IN(...) clause with named parameters.
-        If values is an explicit empty list, return '1=0' to avoid unbounded queries.
-        """
-        if isinstance(values, (list, tuple, set)):
-            values = [v for v in values if v is not None]
-            if len(values) == 0:
-                return "1=0"
-        else:
-            values = [values] if values is not None else []
-
-        if not values:
-            return None
-
-        placeholders = []
-        for idx, val in enumerate(values):
-            key = f"{param_prefix}_{idx}"
-            placeholders.append(f":{key}")
-            params[key] = val
-        return f"{column} IN ({', '.join(placeholders)})"
 
     @staticmethod
     def get_insights(filters: dict):
@@ -53,37 +64,36 @@ class SemanticService:
         locationID = filters.get("locationID")
         dateFrom   = filters.get("dateFrom")
         dateTo     = filters.get("dateTo")
-        buzz_mode  = filters.get("mode", "smart")
+        mode       = filters.get("mode", "smart")
 
-        # ---------- 1) WHERE clause ----------
-        conditions: List[str] = []
+        conditions = []
         params: Dict[str, Any] = {}
 
         # formatID
         if formatID is not None:
-            if isinstance(formatID, (list, tuple, set)):
-                clause = SemanticService._bind_in_clause("formatID", formatID, "formatID", params)
-                if clause: conditions.append(clause)
-            else:
-                conditions.append("formatID = :formatID")
-                params["formatID"] = formatID
+            clause = _bind_in_clause("formatID", formatID, "formatID", params)
+            if clause:
+                conditions.append(clause)
 
         # sectionID
         if sectionID is not None:
-            clause = SemanticService._bind_in_clause("sectionID", sectionID, "sectionID", params)
-            if clause: conditions.append(clause)
+            clause = _bind_in_clause("sectionID", sectionID, "sectionID", params)
+            if clause:
+                conditions.append(clause)
 
         # locationID
         if locationID is not None:
-            clause = SemanticService._bind_in_clause("locationID", locationID, "locationID", params)
-            if clause: conditions.append(clause)
+            clause = _bind_in_clause("locationID", locationID, "locationID", params)
+            if clause:
+                conditions.append(clause)
 
         # Tag
         if Tag is not None:
-            clause = SemanticService._bind_in_clause("Tag", Tag, "Tag", params)
-            if clause: conditions.append(clause)
+            clause = _bind_in_clause("Tag", Tag, "Tag", params)
+            if clause:
+                conditions.append(clause)
 
-        # Dates
+        # date filters
         if dateFrom and dateTo:
             conditions.append("DATE(Date) BETWEEN :dateFrom AND :dateTo")
             params["dateFrom"] = dateFrom
@@ -95,21 +105,18 @@ class SemanticService:
             conditions.append("DATE(Date) <= :dateTo")
             params["dateTo"] = dateTo
 
-        # Non-empty comments only
+        # Only non-empty comments
         conditions.append("reason IS NOT NULL")
         conditions.append("reason != ''")
 
-        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        # ---------- 2) Query DB ----------
         sql = f"""
         SELECT id, formatID, sectionID, locationID, reason, Date
         FROM responsend
         {where_clause}
         ORDER BY Date DESC
         """
-
-        print("[SQL]", sql, params)
 
         with engine.connect() as conn:
             rows = conn.execute(text(sql), params).mappings().all()
@@ -120,86 +127,69 @@ class SemanticService:
                 "total_comments": 0,
                 "items": [],
                 "analytics": {
-                    "sentiment": {"distribution": {}, "total_comments": 0, "classified_comments": [], "by_location": {}},
-                    "buzzwords": {"global": {"positive": [], "negative": [], "all": []}, "by_location": {}},
-                    "similarities": [],
+                    "sentiment": {
+                        "distribution": {},
+                        "total_comments": 0,
+                        "classified_comments": [],
+                        "by_location": {}
+                    },
+                    "buzzwords": {
+                        "global": {"positive": [], "negative": [], "all": []}
+                    },
                     "insights": {"global": [], "by_location": {}},
-                    "segmentation": {"by_location": {}, "by_section": {}, "by_format": {}},
+                    "segmentation": {
+                        "by_location": {},
+                        "by_section": {},
+                        "by_format": {}
+                    }
                 },
-                "message": "No comments found",
+                "message": "No comments found"
             }
 
-        # ---------- 3) Build payload ----------
-        comments_payload: List[Dict[str, Any]] = []
-        for m in rows:
-            reason = (m.get("reason") or "").strip()
-            if not reason:
+        # Prepare payload (UI-compatible)
+        items = []
+        for r in rows:
+            text_val = (r.get("reason") or "").strip()
+            if not text_val:
                 continue
-            comments_payload.append({
-                "comment": reason,
-                "locationID": m.get("locationID"),
-                "id": m.get("id"),
-                "formatID": m.get("formatID"),
-                "sectionID": m.get("sectionID"),
-                "date": SemanticService._iso(m.get("Date")),  # <-- JSON-safe
+
+            items.append({
+                "id": r.get("id"),
+                "comment": text_val,
+                "locationID": r.get("locationID"),
+                "formatID": r.get("formatID"),
+                "sectionID": r.get("sectionID"),
+                "date": _iso(r.get("Date")),
             })
 
-        if not comments_payload:
+        if not items:
             return {
                 "filters": filters,
                 "total_comments": 0,
                 "items": [],
-                "analytics": {
-                    "sentiment": {"distribution": {}, "total_comments": 0, "classified_comments": [], "by_location": {}},
-                    "buzzwords": {"global": {"positive": [], "negative": [], "all": []}, "by_location": {}},
-                    "similarities": [],
-                    "insights": {"global": [], "by_location": {}},
-                    "segmentation": {"by_location": {}, "by_section": {}, "by_format": {}},
-                },
-                "message": "No non-empty comments after filtering",
+                "analytics": {},
+                "message": "No non-empty comments after filtering"
             }
 
-        # ---------- 4) Run NLP Analysis ----------
-        sentiment    = SemanticEngine.overall_sentiment(comments_payload)
-        buzzwords    = SemanticEngine.extract_buzzwords(comments_payload, top_n=10, mode=buzz_mode)
+        # NLP Processing
+        sentiment = SemanticEngine.overall_sentiment(items)
+        buzzwords = SemanticEngine.extract_buzzwords(items, top_n=10)
+        insights  = SemanticEngine.actionable_recommendations(items)
 
-        # Guard similarities (O(n^2)). Skip if too many comments or torch missing.
-        similarities: List[Dict[str, Any]] = []
-        try:
-            if len(comments_payload) <= MAX_SIMILARITY_COMMENTS:
-                similarities = SemanticEngine.compute_similarities(comments_payload)
-            else:
-                similarities = []  # or sample first N; keep API stable
-        except Exception as _e:
-            # log upstream; keep API stable
-            similarities = []
-
-        insights = SemanticEngine.actionable_recommendations(comments_payload)
-
-        # Segmentation (re-uses sentiment)
+        # segmentation
         segmentation = {
-            "by_location": SemanticEngine.segment_by(
-                [{"comment": r["comment"], "locationID": r["locationID"]} for r in comments_payload],
-                "locationID"
-            ),
-            "by_section": SemanticEngine.segment_by(
-                [{"comment": r["comment"], "locationID": r["locationID"], "sectionID": r["sectionID"]} for r in comments_payload],
-                "sectionID"
-            ),
-            "by_format": SemanticEngine.segment_by(
-                [{"comment": r["comment"], "locationID": r["locationID"], "formatID": r["formatID"]} for r in comments_payload],
-                "formatID"
-            ),
+            "by_location": SemanticEngine.segment_by(items, "locationID"),
+            "by_section": SemanticEngine.segment_by(items, "sectionID"),
+            "by_format":  SemanticEngine.segment_by(items, "formatID"),
         }
 
         return {
             "filters": filters,
-            "total_comments": len(comments_payload),
-            "items": comments_payload,  # JSON-safe now
+            "total_comments": len(items),
+            "items": items,
             "analytics": {
                 "sentiment": sentiment,
                 "buzzwords": buzzwords,
-                "similarities": similarities,
                 "insights": insights,
                 "segmentation": segmentation,
             },

@@ -5,33 +5,33 @@ chatbot_bp = Blueprint("chatbot", __name__)
 
 @chatbot_bp.route("/ask", methods=["POST"])
 def ask():
-    # """
-    # Ask a natural language question about branch_audit table.
-    # ---
-    # tags:
-    #   - Chatbot
-    # consumes:
-    #   - application/json
-    # parameters:
-    #   - in: body
-    #     name: body
-    #     required: true
-    #     schema:
-    #       type: object
-    #       properties:
-    #         question:
-    #           type: string
-    #           example: "Tell me about the lowest scoring branch in Bahawalpur"
-    #         client_id:
-    #           type: integer
-    #           example: 1
-    #         format_id:
-    #           type: integer
-    #           example: 1
-    # responses:
-    #   200:
-    #     description: SQL query and chatbot answer
-    # """
+    """
+    Ask a natural language question about branch_audit table.
+    ---
+    tags:
+      - Chatbot
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            question:
+              type: string
+              example: "Tell me about the lowest scoring branch in Bahawalpur"
+            client_id:
+              type: integer
+              example: 1
+            format_id:
+              type: integer
+              example: 1
+    responses:
+      200:
+        description: SQL query and chatbot answer
+    """
     if not request.is_json:
         return jsonify({"error": "Content-Type must be application/json"}), 415
     data = request.get_json(silent=True) or {}

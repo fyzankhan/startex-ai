@@ -7,28 +7,28 @@ semantic_bp = Blueprint("semantic", __name__)
 
 @semantic_bp.route("/sentiment/insights", methods=["POST"])
 def sentiment_insights():
-    # """
-    # Sentiment Insights API
-    # ---
-    # tags:
-    #   - Semantic
-    # parameters:
-    #   - in: body
-    #     name: body
-    #     required: true
-    #     schema:
-    #       type: object
-    #       properties:
-    #         formatID: { type: number, example: 1 }
-    #         sectionID: { type: array, items: { type: number }, example: [1, 2, 3] }
-    #         Tag: { type: array, items: { type: string }, example: ["Food Quality", "Courtesy"] }
-    #         locationID: { type: array, items: { type: number }, example: [1, 2, 3] }
-    #         dateFrom: { type: string, format: date, example: "2025-09-01" }
-    #         dateTo: { type: string, format: date, example: "2025-09-26" }
-    # responses:
-    #   200:
-    #     description: Semantic Sentiment Insights
-    # """
+    """
+    Sentiment Insights API
+    ---
+    tags:
+      - Semantic
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            formatID: { type: number, example: 1 }
+            sectionID: { type: array, items: { type: number }, example: [1, 2, 3] }
+            Tag: { type: array, items: { type: string }, example: ["Food Quality", "Courtesy"] }
+            locationID: { type: array, items: { type: number }, example: [1, 2, 3] }
+            dateFrom: { type: string, format: date, example: "2025-09-01" }
+            dateTo: { type: string, format: date, example: "2025-09-26" }
+    responses:
+      200:
+        description: Semantic Sentiment Insights
+    """
     if not request.is_json:
         return jsonify({"error": "Content-Type must be application/json"}), 400
 
