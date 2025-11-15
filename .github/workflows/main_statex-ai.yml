@@ -2,65 +2,63 @@ name: Build and deploy Python app to Azure Web App - statex-ai
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
 
-      - name: Install dependencies (validation only)
+      - name: Validate requirements
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # PACKAGE THE ENTIRE PROJECT (THIS FIXES YOUR ISSUE)
-      - name: Create deployment package
+      - name: Prepare deploy folder
         run: |
-          zip -r app.zip . -x "antenv/*"
+          mkdir deploy
+          cp -r * deploy
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Zip deploy package
+        run: |
+          cd deploy
+          zip -r ../app.zip .
+          cd ..
+
+      - uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: app.zip
 
-  release:
+  deploy:
     runs-on: ubuntu-latest
-    needs: deploy
-    permissions:
-      id-token: write
-      contents: read
+    needs: build
 
     steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: python-app
 
-      - name: Login to Azure
-        uses: azure/login@v2
+      - uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_CAEB4E7FD606475CB88AA1F887BBB08E }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_ECDD08D8874042D3AD0FB90E6D7D48B8 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_472BF5CF40D14AE08562337A5F10C42B }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID }}
+
+      - name: Clean previous app
+        run: |
+          az webapp ssh --name statex-ai --resource-group StartexAI --command "rm -rf /home/site/wwwroot/*"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'statex-ai'
-          slot-name: 'Production'
           package: app.zip
