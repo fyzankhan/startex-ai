@@ -8,4 +8,3 @@ langchain-openai
 langchain-core
 langchain-community
 cryptography
-flask-swagger-ui==4.11.1
