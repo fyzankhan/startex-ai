@@ -1,10 +1,10 @@
 from flask import Flask, jsonify
-# from flasgger import Swagger
+
 from controllers.chatbot_controller import chatbot_bp
 from controllers.semantic_controller import semantic_bp
+from controllers.sync_controller import sync_bp
 
 app = Flask(__name__)
-# swagger = Swagger(app)
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -16,6 +16,7 @@ def index():
 
 app.register_blueprint(chatbot_bp, url_prefix="/chatbot")
 app.register_blueprint(semantic_bp, url_prefix="/semantic")
+app.register_blueprint(sync_bp, url_prefix="/sync")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

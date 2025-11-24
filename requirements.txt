@@ -8,3 +8,4 @@ langchain-openai
 langchain-core
 langchain-community
 cryptography
+pinecone-client
